@@ -17,7 +17,7 @@ h1{font-size:26px;margin:8px 0 2px}
 section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
 h2{font-size:17px;margin:0 0 10px}
 .row{display:flex;gap:8px;flex-wrap:wrap}
-input[type=text],input[type=number]{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0}
+input[type=text],input[type=number],select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0}
 input:focus{outline:2px solid var(--accent);outline-offset:0}
 .grow{flex:1 1 140px}
 .num{width:90px}
@@ -63,6 +63,7 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
       <input id="iname" class="grow" type="text" placeholder="เช่น เบียร์ช้าง, น้ำแข็ง, กับแกล้ม" maxlength="40">
       <input id="iprice" class="num" type="number" inputmode="decimal" min="0" placeholder="ราคา">
       <input id="iqty" class="num" type="number" inputmode="numeric" min="1" value="1" style="width:70px" aria-label="จำนวน">
+      <select id="ipayer" aria-label="คนจ่าย"></select>
       <button id="addI">เพิ่ม</button>
     </div>
     <div id="items" style="margin-top:8px"></div>
@@ -106,53 +107,60 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
   function addItem(){
     var n=$('iname').value.trim(),p=parseFloat($('iprice').value),q=parseInt($('iqty').value,10)||1;
     if(!n||isNaN(p)||p<0)return;
-    state.items.push({id:state.nid++,name:n,price:p,qty:Math.max(1,q),who:state.people.map(function(x){return x.id})});
+    state.items.push({id:state.nid++,name:n,price:p,qty:Math.max(1,q),who:state.people.map(function(x){return x.id}),payer:$('ipayer').value?+$('ipayer').value:null});
     $('iname').value='';$('iprice').value='';$('iqty').value=1;render();$('iname').focus();
   }
   function calc(){
-    var f=(1+state.svc/100)*(1+state.vat/100),sub={},base=0;
-    state.people.forEach(function(p){sub[p.id]=0});
+    var f=(1+state.svc/100)*(1+state.vat/100),sub={},base=0,subP={},paid={},paidItems={};
+    state.people.forEach(function(p){sub[p.id]=0;subP[p.id]=0;paid[p.id]=0;paidItems[p.id]=[]});
     state.items.forEach(function(it){
       var t=it.price*it.qty,w=it.who.filter(function(id){return sub[id]!==undefined});
       base+=t;
       if(!w.length)return;
-      w.forEach(function(id){sub[id]+=t/w.length});
+      w.forEach(function(id){sub[id]+=t/w.length;if(it.payer)subP[id]+=t/w.length});
+      if(it.payer&&paid[it.payer]!==undefined){paid[it.payer]+=t*f;paidItems[it.payer].push(it.name+' ('+fmt(t*f)+')')}
     });
-    var out=state.people.map(function(p){var v=sub[p.id]*f;return {name:p.name,amt:state.ceil?Math.ceil(v-1e-9):v}});
+    var out=state.people.map(function(p){var v=sub[p.id]*f;return {name:p.name,amt:state.ceil?Math.ceil(v-1e-9):v,paid:paid[p.id],items:paidItems[p.id]}});
     var sum=out.reduce(function(a,b){return a+b.amt},0);
-    return {rows:out,sum:sum,base:base,unassigned:state.items.filter(function(it){return !it.who.length}).length};
+    var bal=state.people.map(function(p){return {name:p.name,v:paid[p.id]-subP[p.id]*f}}),cr=bal.filter(function(b){return b.v>0.005}).sort(function(a,b){return b.v-a.v}),db=bal.filter(function(b){return b.v<-0.005}).sort(function(a,b){return a.v-b.v}),tr=[],i=0,j=0;
+    while(i<db.length&&j<cr.length){var m=Math.min(-db[i].v,cr[j].v);var amt=state.ceil?Math.ceil(m-1e-9):Math.round(m*100)/100;if(amt>0)tr.push({from:db[i].name,to:cr[j].name,amt:amt});db[i].v+=m;cr[j].v-=m;if(db[i].v>-0.005)i++;if(cr[j].v<0.005)j++}
+    return {rows:out,sum:sum,transfers:tr,base:base,unassigned:state.items.filter(function(it){return !it.who.length}).length};
   }
+  function payOpts(sel){return '<option value="">— ใครจ่ายให้ก่อน —</option>'+state.people.map(function(p){return '<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')}
   function render(){
     $('chips').innerHTML=state.people.map(function(p){return '<span class="chip">'+esc(p.name)+'<button class="x" data-rp="'+p.id+'" aria-label="ลบ">×</button></span>'}).join('')||'<span class="muted">ยังไม่มีใคร</span>';
     $('items').innerHTML=state.items.length?state.items.map(function(it){
       var who=state.people.map(function(p){var on=it.who.indexOf(p.id)>-1;return '<label class="'+(on?'on':'')+'"><input type="checkbox" data-it="'+it.id+'" data-pp="'+p.id+'"'+(on?' checked':'')+'>'+esc(p.name)+'</label>'}).join('');
-      return '<div class="item"><div class="row" style="justify-content:space-between;align-items:center"><div><b>'+esc(it.name)+'</b> <span class="muted">'+fmt(it.price)+' × '+it.qty+' = '+fmt(it.price*it.qty)+' บาท</span></div><button class="x" data-ri="'+it.id+'" aria-label="ลบ">×</button></div><div class="who">'+who+'</div></div>';
+      return '<div class="item"><div class="row" style="justify-content:space-between;align-items:center"><div><b>'+esc(it.name)+'</b> <span class="muted">'+fmt(it.price)+' × '+it.qty+' = '+fmt(it.price*it.qty)+' บาท</span></div><button class="x" data-ri="'+it.id+'" aria-label="ลบ">×</button></div><div class="who">'+who+'</div><div class="muted" style="margin-top:8px">คนจ่ายให้ก่อน: <select data-pay="'+it.id+'">'+payOpts(it.payer)+'</select></div></div>';
     }).join(''):'<div class="empty">ยังไม่มีรายการ</div>';
     var r=calc();
     if(!state.people.length||!state.items.length){$('result').innerHTML='<div class="empty">เพิ่มคนและรายการก่อน แล้วผลจะแสดงที่นี่</div>'}
     else{
-      $('result').innerHTML=r.rows.map(function(x){return '<div class="res"><span>'+esc(x.name)+'</span><b>'+fmt(x.amt)+' บาท</b></div>'}).join('')+
+      $('result').innerHTML=r.rows.map(function(x){return '<div class="res" style="flex-wrap:wrap"><span>'+esc(x.name)+'</span><b>'+fmt(x.amt)+' บาท</b>'+(x.items.length?'<div class="muted" style="width:100%">จ่ายไปแล้ว: '+esc(x.items.join(', '))+' = '+fmt(x.paid)+' บาท</div>':'')+'</div>'}).join('')+
       '<div class="total"><span>รวมทั้งหมด</span><span>'+fmt(r.sum)+' บาท</span></div>'+
+      (r.transfers.length?'<h2 style="margin-top:16px">ใครต้องโอนให้ใคร</h2>'+r.transfers.map(function(t){return '<div class="res"><span>'+esc(t.from)+' → '+esc(t.to)+'</span><b>'+fmt(t.amt)+' บาท</b></div>'}).join(''):(state.items.some(function(i){return i.payer})?'':'<p class="muted">เลือก “คนจ่ายให้ก่อน” ในแต่ละรายการ เพื่อดูว่าใครต้องโอนให้ใคร</p>'))+
       (r.unassigned?'<p class="muted">มี '+r.unassigned+' รายการที่ยังไม่ได้เลือกคนหาร (ไม่ถูกนับ)</p>':'');
     }
+    var cur=$('ipayer').value;$('ipayer').innerHTML=payOpts(cur?+cur:null);
     $('svc').value=state.svc;$('vat').value=state.vat;$('ceil').checked=state.ceil;
     save();
   }
   function summary(){
     var r=calc(),L=['🍻 สรุปหารค่าเหล้า'];
     r.rows.forEach(function(x){L.push(x.name+': '+fmt(x.amt)+' บาท')});
-    L.push('รวม '+fmt(r.sum)+' บาท');return L.join('\n');
+    L.push('รวม '+fmt(r.sum)+' บาท');if(r.transfers.length){L.push('','ต้องโอน:');r.transfers.forEach(function(t){L.push(t.from+' → '+t.to+' '+fmt(t.amt)+' บาท')})}return L.join('\n');
   }
   $('addP').onclick=addPerson;$('addI').onclick=addItem;
   $('pname').onkeydown=function(e){if(e.key==='Enter')addPerson()};
   ['iname','iprice','iqty'].forEach(function(id){$(id).onkeydown=function(e){if(e.key==='Enter')addItem()}});
   document.addEventListener('click',function(e){
     var t=e.target;
-    if(t.dataset.rp){var id=+t.dataset.rp;state.people=state.people.filter(function(p){return p.id!==id});state.items.forEach(function(it){it.who=it.who.filter(function(x){return x!==id})});render()}
+    if(t.dataset.rp){var id=+t.dataset.rp;state.people=state.people.filter(function(p){return p.id!==id});state.items.forEach(function(it){it.who=it.who.filter(function(x){return x!==id});if(it.payer===id)it.payer=null});render()}
     if(t.dataset.ri){var iid=+t.dataset.ri;state.items=state.items.filter(function(i){return i.id!==iid});render()}
   });
   document.addEventListener('change',function(e){
     var t=e.target;
+    if(t.dataset&&t.dataset.pay){var pi=state.items.filter(function(i){return i.id===+t.dataset.pay})[0];if(pi){pi.payer=t.value?+t.value:null;render()}return}
     if(t.dataset&&t.dataset.it){
       var it=state.items.filter(function(i){return i.id===+t.dataset.it})[0],pid=+t.dataset.pp;
       if(!it)return;
