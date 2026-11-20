@@ -70,11 +70,12 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
   </section>
 
   <section>
-    <h2>3. ค่าบริการและภาษี</h2>
+    <h2>3. ค่าบริการ ภาษี และคนจ่ายบิล</h2>
     <div class="opts">
       <label>Service charge <input id="svc" class="num" type="number" inputmode="decimal" min="0" value="0" style="width:70px"> %</label>
       <label>VAT <input id="vat" class="num" type="number" inputmode="decimal" min="0" value="0" style="width:70px"> %</label>
       <label><input id="ceil" type="checkbox"> ปัดขึ้นเป็นบาทเต็ม</label>
+      <label>คนจ่ายบิลก่อน (ทั้งบิล) <select id="dpayer"></select></label>
     </div>
   </section>
 
@@ -117,8 +118,8 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
       var t=it.price*it.qty,w=it.who.filter(function(id){return sub[id]!==undefined});
       base+=t;
       if(!w.length)return;
-      w.forEach(function(id){sub[id]+=t/w.length;if(it.payer)subP[id]+=t/w.length});
-      if(it.payer&&paid[it.payer]!==undefined){paid[it.payer]+=t*f;paidItems[it.payer].push(it.name+' ('+fmt(t*f)+')')}
+      w.forEach(function(id){sub[id]+=t/w.length;if(it.payer||state.defPayer)subP[id]+=t/w.length});var py=it.payer||state.defPayer;
+      if(py&&paid[py]!==undefined){paid[py]+=t*f;paidItems[py].push(it.name+' ('+fmt(t*f)+')')}
     });
     var out=state.people.map(function(p){var v=sub[p.id]*f;return {name:p.name,amt:state.ceil?Math.ceil(v-1e-9):v,paid:paid[p.id],items:paidItems[p.id]}});
     var sum=out.reduce(function(a,b){return a+b.amt},0);
@@ -138,10 +139,10 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
     else{
       $('result').innerHTML=r.rows.map(function(x){return '<div class="res" style="flex-wrap:wrap"><span>'+esc(x.name)+'</span><b>'+fmt(x.amt)+' บาท</b>'+(x.items.length?'<div class="muted" style="width:100%">จ่ายไปแล้ว: '+esc(x.items.join(', '))+' = '+fmt(x.paid)+' บาท</div>':'')+'</div>'}).join('')+
       '<div class="total"><span>รวมทั้งหมด</span><span>'+fmt(r.sum)+' บาท</span></div>'+
-      (r.transfers.length?'<h2 style="margin-top:16px">ใครต้องโอนให้ใคร</h2>'+r.transfers.map(function(t){return '<div class="res"><span>'+esc(t.from)+' → '+esc(t.to)+'</span><b>'+fmt(t.amt)+' บาท</b></div>'}).join(''):(state.items.some(function(i){return i.payer})?'':'<p class="muted">เลือก “คนจ่ายให้ก่อน” ในแต่ละรายการ เพื่อดูว่าใครต้องโอนให้ใคร</p>'))+
+      (r.transfers.length?'<h2 style="margin-top:16px">ใครต้องโอนให้ใคร</h2>'+r.transfers.map(function(t){return '<div class="res"><span>'+esc(t.from)+' → '+esc(t.to)+'</span><b>'+fmt(t.amt)+' บาท</b></div>'}).join(''):(state.defPayer||state.items.some(function(i){return i.payer})?'':'<p class="muted">เลือก “คนจ่ายให้ก่อน” ในแต่ละรายการ เพื่อดูว่าใครต้องโอนให้ใคร</p>'))+
       (r.unassigned?'<p class="muted">มี '+r.unassigned+' รายการที่ยังไม่ได้เลือกคนหาร (ไม่ถูกนับ)</p>':'');
     }
-    var cur=$('ipayer').value;$('ipayer').innerHTML=payOpts(cur?+cur:null);
+    $('dpayer').innerHTML=payOpts(state.defPayer||null).replace('— ใครจ่ายให้ก่อน —','— ไม่ระบุ —');var cur=$('ipayer').value;$('ipayer').innerHTML=payOpts(cur?+cur:null);
     $('svc').value=state.svc;$('vat').value=state.vat;$('ceil').checked=state.ceil;
     save();
   }
@@ -155,11 +156,12 @@ button.x{background:transparent;color:var(--muted);padding:4px 8px;font-size:18p
   ['iname','iprice','iqty'].forEach(function(id){$(id).onkeydown=function(e){if(e.key==='Enter')addItem()}});
   document.addEventListener('click',function(e){
     var t=e.target;
-    if(t.dataset.rp){var id=+t.dataset.rp;state.people=state.people.filter(function(p){return p.id!==id});state.items.forEach(function(it){it.who=it.who.filter(function(x){return x!==id});if(it.payer===id)it.payer=null});render()}
+    if(t.dataset.rp){var id=+t.dataset.rp;state.people=state.people.filter(function(p){return p.id!==id});state.items.forEach(function(it){it.who=it.who.filter(function(x){return x!==id});if(it.payer===id)it.payer=null});if(state.defPayer===id)state.defPayer=null;render()}
     if(t.dataset.ri){var iid=+t.dataset.ri;state.items=state.items.filter(function(i){return i.id!==iid});render()}
   });
   document.addEventListener('change',function(e){
     var t=e.target;
+    if(t.id==='dpayer'){state.defPayer=t.value?+t.value:null;render();return}
     if(t.dataset&&t.dataset.pay){var pi=state.items.filter(function(i){return i.id===+t.dataset.pay})[0];if(pi){pi.payer=t.value?+t.value:null;render()}return}
     if(t.dataset&&t.dataset.it){
       var it=state.items.filter(function(i){return i.id===+t.dataset.it})[0],pid=+t.dataset.pp;
